@@ -20,6 +20,7 @@ export const TopNav: React.FC<TopNavProps> = ({
 }) => {
   const navItems = [
     { id: 'arrivals', label: 'Arrivals Board' },
+    { id: 'lta', label: 'LTA Singapore' },
     { id: 'progression', label: 'Stop Progression' },
     { id: 'topology', label: 'Network Topology' },
     { id: 'kiosk', label: 'Station Kiosk' },

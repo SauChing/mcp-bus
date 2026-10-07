@@ -27,6 +27,7 @@ import { StationKioskBoard } from './components/StationKioskBoard';
 import { TripPlanner } from './components/TripPlanner';
 import { ServiceBulletins } from './components/ServiceBulletins';
 import { VehicleTelemetryModal } from './components/VehicleTelemetryModal';
+import { LtaBusArrivals } from './components/LtaBusArrivals';
 import { transitAudio } from './utils/audio';
 import {
   MapPin,
@@ -416,6 +417,11 @@ export default function App() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* VIEW: Singapore LTA Live DataMall v3 Integration */}
+        {activeTab === 'lta' && (
+          <LtaBusArrivals />
         )}
 
         {/* VIEW 2: Stop Progression & Telemetry Track */}
