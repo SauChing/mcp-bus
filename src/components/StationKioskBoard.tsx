@@ -1,30 +1,77 @@
-import React, { useState } from 'react';
-import { Volume2, Maximize2, Minimize2, Radio, Clock, ShieldCheck, MapPin } from 'lucide-react';
-import { LiveDeparture, TransitStop } from '../types/transit';
+import React, { useState, useEffect } from 'react';
+import { Volume2, Maximize2, Minimize2, Clock, ShieldCheck, Bus, RefreshCw } from 'lucide-react';
+import { SINGAPORE_BUS_STOPS, SingaporeBusStop, LTA_OPERATORS } from '../data/singaporeLtaData';
+import { LtaBusService, LtaApiResponse } from '../types/transit';
 import { transitAudio } from '../utils/audio';
 
 interface StationKioskBoardProps {
-  currentStation: TransitStop;
-  stations: Record<string, TransitStop>;
-  onSelectStation: (st: TransitStop) => void;
-  departures: LiveDeparture[];
+  currentStopCode: string;
+  onSelectStopCode: (code: string) => void;
   systemTime: string;
 }
 
 export const StationKioskBoard: React.FC<StationKioskBoardProps> = ({
-  currentStation,
-  stations,
-  onSelectStation,
-  departures,
+  currentStopCode,
+  onSelectStopCode,
   systemTime,
 }) => {
   const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
+  const [services, setServices] = useState<LtaBusService[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
   const [announcingId, setAnnouncingId] = useState<string | null>(null);
 
-  const handleAnnounce = (dep: LiveDeparture) => {
-    setAnnouncingId(dep.id);
-    const mins = Math.max(1, Math.round(dep.countdownSeconds / 60));
-    const text = `Attention passengers. Line ${dep.routeNumber} towards ${dep.destination} departs from ${dep.platform} in approximately ${mins} minutes.`;
+  const currentStop =
+    SINGAPORE_BUS_STOPS.find((s) => s.code === currentStopCode) || SINGAPORE_BUS_STOPS[0];
+
+  const fetchKioskData = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/bus-arrival?BusStopCode=${encodeURIComponent(currentStop.code)}`);
+      if (res.ok) {
+        const json: LtaApiResponse = await res.json();
+        setServices(json.Services || []);
+      }
+    } catch {
+      // Handled silently
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchKioskData();
+    const interval = setInterval(fetchKioskData, 20000);
+    return () => clearInterval(interval);
+  }, [currentStop.code]);
+
+  const calculateMinutes = (isoString?: string) => {
+    if (!isoString) return '-';
+    const diffMs = new Date(isoString).getTime() - Date.now();
+    const diffSec = Math.round(diffMs / 1000);
+    if (diffSec <= 45) return 'Arr';
+    const mins = Math.floor(diffSec / 60);
+    if (mins < 0) return 'Dep';
+    return `${mins}m`;
+  };
+
+  const getLoadBadge = (load?: string) => {
+    switch (load) {
+      case 'SEA':
+        return { label: 'Seats', color: 'text-[#006948] bg-[#f5fff7] border-[#85f8c4]' };
+      case 'SDA':
+        return { label: 'Standing', color: 'text-[#855300] bg-[#fff7ed] border-[#ffddb8]' };
+      case 'LSD':
+        return { label: 'Crowded', color: 'text-[#ba1a1a] bg-[#ffdad6] border-[#ffb4ab]' };
+      default:
+        return { label: 'Normal', color: 'text-slate-700 bg-slate-100 border-slate-200' };
+    }
+  };
+
+  const handleAnnounce = (svc: LtaBusService) => {
+    setAnnouncingId(svc.ServiceNo);
+    const eta = calculateMinutes(svc.NextBus?.EstimatedArrival);
+    const dest = svc.NextBus?.DestinationCode || 'terminal';
+    const text = `Attention passengers at bus stop ${currentStop.code}. Service ${svc.ServiceNo} towards destination ${dest} arriving ${eta === 'Arr' ? 'now' : `in ${eta}`}.`;
     transitAudio.announce(text);
     setTimeout(() => setAnnouncingId(null), 3000);
   };
@@ -53,42 +100,38 @@ export const StationKioskBoard: React.FC<StationKioskBoardProps> = ({
                   isFullScreen ? 'bg-[#006948] text-white' : 'bg-[#eaedff] text-[#006948]'
                 }`}
               >
-                MUNICIPAL TERMINAL DISPLAY · {currentStation.code}
+                SINGAPORE LTA MUNICIPAL PASSENGER DISPLAY · #{currentStop.code}
               </span>
-              <span className="text-xs text-[#6d7a72] font-semibold">{currentStation.zone}</span>
+              <span className="text-xs text-[#6d7a72] font-semibold">{currentStop.zone}</span>
             </div>
             <h1
               className={`font-['Space_Grotesk'] font-bold tracking-tight mt-1 ${
                 isFullScreen ? 'text-3xl md:text-4xl text-white' : 'text-2xl text-[#131b2e]'
               }`}
             >
-              {currentStation.name}
+              {currentStop.name}
             </h1>
+            <p className="text-xs text-[#6d7a72] mt-0.5">{currentStop.road}</p>
           </div>
 
-          {/* Right Controls: Station Selector + Full-Screen Toggle + Digital Clock */}
+          {/* Right Controls: Stop Selector, SGT Clock, Fullscreen */}
           <div className="flex flex-wrap items-center gap-3">
-            {/* Station dropdown */}
             <select
-              value={currentStation.id}
-              onChange={(e) => {
-                const s = stations[e.target.value];
-                if (s) onSelectStation(s);
-              }}
+              value={currentStop.code}
+              onChange={(e) => onSelectStopCode(e.target.value)}
               className={`px-3 py-2 text-xs font-semibold rounded border outline-none ${
                 isFullScreen
                   ? 'bg-slate-800 text-white border-slate-700'
                   : 'bg-[#faf8ff] text-[#131b2e] border-[#cbd5e1]'
               }`}
             >
-              {Object.values(stations).map((st) => (
-                <option key={st.id} value={st.id}>
-                  {st.name} ({st.code})
+              {SINGAPORE_BUS_STOPS.map((st) => (
+                <option key={st.code} value={st.code}>
+                  #{st.code} · {st.name.split('/')[0]}
                 </option>
               ))}
             </select>
 
-            {/* Split-Flap High Contrast Clock */}
             <div
               className={`px-4 py-2 rounded font-['JetBrains_Mono'] text-lg md:text-xl font-bold tracking-widest tabular-nums flex items-center gap-2 ${
                 isFullScreen
@@ -97,10 +140,9 @@ export const StationKioskBoard: React.FC<StationKioskBoardProps> = ({
               }`}
             >
               <Clock className="w-4 h-4 text-[#006948]" />
-              <span>{systemTime}</span>
+              <span>{systemTime} SGT</span>
             </div>
 
-            {/* Fullscreen Button */}
             <button
               onClick={() => setIsFullScreen(!isFullScreen)}
               title={isFullScreen ? 'Exit Full Screen' : 'Kiosk Full Screen Display Mode'}
@@ -114,26 +156,9 @@ export const StationKioskBoard: React.FC<StationKioskBoardProps> = ({
             </button>
           </div>
         </div>
-
-        {/* Available Platforms / Bays Chips */}
-        <div className="flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-[#e2e8f0]/40 text-xs">
-          <span className={`${isFullScreen ? 'text-slate-400' : 'text-[#6d7a72]'} font-semibold`}>
-            Active Gates:
-          </span>
-          {currentStation.platforms.map((plat) => (
-            <span
-              key={plat}
-              className={`px-2 py-0.5 rounded font-['JetBrains_Mono'] text-[11px] font-bold ${
-                isFullScreen ? 'bg-slate-800 text-slate-200' : 'bg-slate-100 text-[#131b2e]'
-              }`}
-            >
-              {plat}
-            </span>
-          ))}
-        </div>
       </div>
 
-      {/* Modular Departure Table (Swiss High-Density Grid) */}
+      {/* High-Contrast Departure Table */}
       <div
         className={`${
           isFullScreen
@@ -151,99 +176,89 @@ export const StationKioskBoard: React.FC<StationKioskBoardProps> = ({
                     : 'bg-[#eaedff] text-[#3d4a42] border-[#dae2fd]'
                 }`}
               >
-                <th className="py-3 px-4">Line</th>
+                <th className="py-3 px-4">Service</th>
+                <th className="py-3 px-4">Operator</th>
                 <th className="py-3 px-4">Destination</th>
-                <th className="py-3 px-4 hidden md:table-cell">Via / Corridor</th>
-                <th className="py-3 px-4">Bay / Track</th>
-                <th className="py-3 px-4">Scheduled</th>
-                <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4 text-right">Departure ETA</th>
-                <th className="py-3 px-4 text-center">Announcement</th>
+                <th className="py-3 px-4">Occupancy Load</th>
+                <th className="py-3 px-4">Deck Type</th>
+                <th className="py-3 px-4 text-center">Next Bus</th>
+                <th className="py-3 px-4 text-center">Subsequent</th>
+                <th className="py-3 px-4 text-center">Third</th>
+                <th className="py-3 px-4 text-center">Broadcast</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#e2e8f0]/60">
-              {departures.map((dep) => {
-                const isAnnouncing = announcingId === dep.id;
-                const minutesLeft = Math.floor(dep.countdownSeconds / 60);
+              {services.map((svc) => {
+                const op = LTA_OPERATORS[svc.Operator] || { name: svc.Operator, badgeBg: '#006948' };
+                const isAnnouncing = announcingId === svc.ServiceNo;
+                const load = getLoadBadge(svc.NextBus?.Load);
 
                 return (
                   <tr
-                    key={dep.id}
+                    key={svc.ServiceNo}
                     className={`transition-colors font-medium text-xs md:text-sm ${
                       isFullScreen
                         ? 'hover:bg-white/5 border-white/10 text-slate-100'
                         : 'hover:bg-[#faf8ff] text-[#131b2e]'
                     }`}
                   >
-                    {/* Line Badge */}
+                    {/* Service Badge */}
                     <td className="py-3 px-4">
                       <span
-                        className="inline-block px-2.5 py-1 rounded text-white font-['JetBrains_Mono'] font-bold text-xs shadow-xs"
-                        style={{ backgroundColor: dep.routeColorHex }}
+                        className="inline-block px-3 py-1 rounded text-white font-['JetBrains_Mono'] font-bold text-sm shadow-xs"
+                        style={{ backgroundColor: op.badgeBg }}
                       >
-                        {dep.routeNumber}
+                        {svc.ServiceNo}
                       </span>
                     </td>
 
-                    {/* Destination */}
-                    <td className="py-3 px-4 font-['Space_Grotesk'] font-bold text-base">
-                      {dep.destination}
+                    {/* Operator */}
+                    <td className="py-3 px-4 font-['Space_Grotesk'] font-bold text-xs opacity-80">
+                      {svc.Operator}
                     </td>
 
-                    {/* Via Corridor */}
-                    <td className="py-3 px-4 hidden md:table-cell text-xs opacity-75 font-['Public_Sans']">
-                      {dep.via}
+                    {/* Destination Stop */}
+                    <td className="py-3 px-4 font-['JetBrains_Mono'] text-xs">
+                      #{svc.NextBus?.DestinationCode || 'Terminal'}
                     </td>
 
-                    {/* Bay / Track */}
+                    {/* Occupancy Load */}
                     <td className="py-3 px-4">
-                      <span
-                        className={`px-2 py-0.5 rounded text-xs font-['JetBrains_Mono'] font-bold ${
-                          isFullScreen
-                            ? 'bg-slate-800 text-[#85f8c4]'
-                            : 'bg-[#eaedff] text-[#006948]'
-                        }`}
-                      >
-                        {dep.platform}
+                      <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold border ${load.color}`}>
+                        {load.label}
                       </span>
                     </td>
 
-                    {/* Scheduled */}
-                    <td className="py-3 px-4 font-['JetBrains_Mono'] tabular-nums text-xs opacity-80">
-                      {dep.scheduledTime}
+                    {/* Deck Type */}
+                    <td className="py-3 px-4 text-xs font-['Public_Sans'] opacity-80">
+                      {svc.NextBus?.Type === 'DD' ? 'Double Deck' : svc.NextBus?.Type === 'BD' ? 'Bendy' : 'Single Deck'}
                     </td>
 
-                    {/* Status */}
-                    <td className="py-3 px-4">
-                      {dep.isDelayed ? (
-                        <span className="inline-flex items-center gap-1 text-[#f59e0b] font-['JetBrains_Mono'] font-bold text-xs">
-                          +{dep.delayMinutes}m DELAY
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 text-[#006948] font-['JetBrains_Mono'] font-bold text-xs">
-                          <span className="w-1.5 h-1.5 rounded-full bg-[#006948] animate-pulse" />
-                          ON TIME
-                        </span>
-                      )}
+                    {/* Next Bus */}
+                    <td className="py-3 px-4 text-center font-['JetBrains_Mono'] font-bold text-base md:text-lg tabular-nums text-[#006948]">
+                      {calculateMinutes(svc.NextBus?.EstimatedArrival)}
                     </td>
 
-                    {/* Countdown Display */}
-                    <td className="py-3 px-4 text-right font-['JetBrains_Mono'] font-bold text-base md:text-lg tabular-nums">
-                      <span className={dep.isDelayed ? 'text-[#f59e0b]' : 'text-[#006948]'}>
-                        {dep.countdownSeconds <= 45 ? 'NOW' : `${minutesLeft} min`}
-                      </span>
+                    {/* Subsequent Bus 2 */}
+                    <td className="py-3 px-4 text-center font-['JetBrains_Mono'] font-bold text-xs md:text-sm tabular-nums opacity-75">
+                      {calculateMinutes(svc.NextBus2?.EstimatedArrival)}
                     </td>
 
-                    {/* Announcement Audio Trigger */}
+                    {/* Third Bus 3 */}
+                    <td className="py-3 px-4 text-center font-['JetBrains_Mono'] text-xs tabular-nums opacity-60">
+                      {calculateMinutes(svc.NextBus3?.EstimatedArrival)}
+                    </td>
+
+                    {/* Announcement Trigger */}
                     <td className="py-3 px-4 text-center">
                       <button
-                        onClick={() => handleAnnounce(dep)}
-                        title="Broadcast civic voice chime announcement for this departure"
+                        onClick={() => handleAnnounce(svc)}
+                        title="Broadcast audio announcement"
                         className={`p-1.5 rounded transition-colors ${
                           isAnnouncing
                             ? 'bg-[#006948] text-white animate-bounce'
                             : isFullScreen
-                            ? 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'
+                            ? 'bg-slate-800 text-slate-300 hover:text-white'
                             : 'bg-[#eaedff] text-[#006948] hover:bg-[#dae2fd]'
                         }`}
                       >
@@ -258,9 +273,9 @@ export const StationKioskBoard: React.FC<StationKioskBoardProps> = ({
         </div>
       </div>
 
-      {/* Footer Info Ribbon */}
+      {/* Footer Info */}
       <div
-        className={`flex flex-col sm:flex-row items-center justify-between text-xs py-3 px-4 rounded ${
+        className={`flex items-center justify-between text-xs py-3 px-4 rounded ${
           isFullScreen
             ? 'bg-slate-900/80 text-slate-400 border border-white/10'
             : 'bg-[#f2f3ff] text-[#3d4a42] border border-[#e2e8f0]'
@@ -268,10 +283,10 @@ export const StationKioskBoard: React.FC<StationKioskBoardProps> = ({
       >
         <div className="flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-[#006948]" />
-          <span>Municipal Telematics Protocol v4.2 · Real-time AVL data synchronized</span>
+          <span>Singapore Land Transport Authority (LTA) DataMall v3 Protocol</span>
         </div>
-        <div className="font-['JetBrains_Mono'] text-[11px] mt-1 sm:mt-0">
-          Audio Announcements: Bilingual Municipal TTS Standard
+        <div className="font-['JetBrains_Mono'] text-[11px]">
+          Refreshes every 20 seconds · GTFS-RT Telematics
         </div>
       </div>
     </div>
